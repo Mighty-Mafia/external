@@ -1,0 +1,101 @@
+#pragma once
+#include <Cheats/Players.h>
+#include <SDK/Classes/World/Primitive.h>
+#include <Render/Settings.h>
+#include <SDK/Offsets.h>
+
+ImU32 f32Toi8(float color[4]) {
+	return IM_COL32(color[0] * 255, color[1] * 255, color[2] * 255, color[3] * 255);
+
+}
+
+inline void espLoop() {
+	for (RBX::Player& player : g_PlayerList) {
+		RBX::ModelInstance character = player.getModelInstance();
+		if (!character.getAddress()) continue;
+
+		Vector3 head = character.findFirstChild("Head").getPrimitive().getPartPosition();
+		Vector3 hrp = character.findFirstChild("HumanoidRootPart").getPrimitive().getPartPosition();
+
+		Vector2 headPos = visualEngine->worldToScreen({ head.x, head.y + 1.1f, head.z });
+		Vector2 hrpPos = visualEngine->worldToScreen({ hrp.x, hrp.y - 0.5f, hrp.z});
+
+		f32 width = std::abs(headPos.y - hrpPos.y);
+		f32 height = std::abs(headPos.y - hrpPos.y) * 2.0f;
+
+		ImVec2 topLeft = {hrpPos.x - width, headPos.y };
+		ImVec2 bottomRight = {hrpPos.x + width, headPos.y + height};
+
+		ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+
+		if (Settings::BoxESP) {
+			drawList->AddRect(topLeft, bottomRight, f32Toi8(Settings::BoxColor));
+		}
+
+		if (Settings::NameESP) {
+			str playerName = player.getName();
+
+			drawList->AddText({topLeft.x + (width - ImGui::CalcTextSize(playerName.c_str()).x * 1.f), topLeft.y - 15}, f32Toi8(Settings::NameColor), playerName.c_str());
+		}
+
+        if (Settings::HealthBar) {
+			f32 health = Comms->read<f32>(character.findFirstChild("Humanoid").getAddress() + 0x19c);
+
+			f32 healthHeight = (bottomRight.y - topLeft.y);
+			f32 healthBar = (health / 100.f) * healthHeight;
+			f32 healthTop = (bottomRight.y - healthBar);
+
+            drawList->AddRectFilled({ topLeft.x - 5.f, healthTop }, { topLeft.x - 3.f, bottomRight.y }, f32Toi8(Settings::HealthColor));
+               
+        }
+
+        // Static variable to store velocity between frames
+        static Vector3 currentVelocity = { 0.f, 0.f, 0.f };
+
+        // Example deltaTime (seconds per frame, update from your game loop)
+        float deltaTime = 0.016f; // ~60 FPS
+
+        if (player.getAddress() == g_LocalPlayer.getAddress()) {
+            auto hrpPrim = character.findFirstChild("HumanoidRootPart").getPrimitive();
+            if (!hrpPrim.getAddress()) continue;
+
+            // --- Input ---
+            float moveX = 0.f;
+            float moveZ = 0.f;
+
+            if (GetAsyncKeyState('W') & 0x8000) moveZ += 1.f; // forward
+            if (GetAsyncKeyState('S') & 0x8000) moveZ -= 1.f; // backward
+            if (GetAsyncKeyState('A') & 0x8000) moveX -= 1.f; // left
+            if (GetAsyncKeyState('D') & 0x8000) moveX += 1.f; // right
+
+            // Normalize diagonal movement
+            float len = sqrt(moveX * moveX + moveZ * moveZ);
+            if (len > 0.f) {
+                moveX /= len;
+                moveZ /= len;
+            }
+
+            // --- Desired velocity ---
+            Vector3 desiredVelocity = {
+                moveX * Settings::WalkSpeed,
+                0.f,
+                moveZ * Settings::WalkSpeed
+            };
+
+            // Jump / descend
+            if (GetAsyncKeyState(VK_SPACE) & 0x8000) desiredVelocity.y = Settings::JumpPower;
+            else if (GetAsyncKeyState(VK_CONTROL) & 0x8000) desiredVelocity.y = -Settings::WalkSpeed;
+            else desiredVelocity.y = 0.f;
+
+            // --- Smooth interpolation ---
+            float acceleration = 10.f; // adjust for faster/slower ramp-up
+            currentVelocity.x += (desiredVelocity.x - currentVelocity.x) * acceleration * deltaTime;
+            currentVelocity.y += (desiredVelocity.y - currentVelocity.y) * acceleration * deltaTime;
+            currentVelocity.z += (desiredVelocity.z - currentVelocity.z) * acceleration * deltaTime;
+
+            // --- Apply velocity ---
+            Comms->write<Vector3>(hrpPrim.getAddress() + 0x158, currentVelocity);
+        }
+
+	}
+}
